@@ -195,4 +195,143 @@ export class GeminiService {
       return { privacyScore: 90, risks: [], recommendations: ["Error in privacy analysis"] };
     }
   }
+
+  async generateSchemaFromNaturalLanguage(
+    description: string,
+    domain: string = 'general',
+    dataType: string = 'tabular'
+  ) {
+    if (!this.model) {
+      // Return mock schema when Gemini is not configured
+      return {
+        schema: {
+          id: { type: 'uuid', description: 'Unique identifier' },
+          name: { type: 'string', description: 'Name field', examples: ['John Doe', 'Jane Smith'] },
+          value: { type: 'number', description: 'Numeric value', constraints: { min: 1, max: 100 } },
+          created_at: { type: 'datetime', description: 'Creation timestamp' }
+        },
+        detectedDomain: domain,
+        suggestions: ["Configure Gemini API for advanced schema generation"]
+    const prompt = `
+      Based on this natural language description, generate a detailed database schema:
+      
+      Description: "${description}"
+      Domain: ${domain}
+      Data Type: ${dataType}
+      
+      Please analyze the description and create a comprehensive schema that includes:
+      
+      1. Field names that match the described data
+      2. Appropriate data types (string, number, boolean, date, email, phone, etc.)
+      3. Constraints where applicable (min/max values, required fields)
+      4. Sample values or examples for each field
+      5. Relationships between fields if applicable
+      6. Domain-specific field suggestions
+      
+      Return the response as JSON with this exact structure:
+      {
+        "schema": {
+          "field_name": {
+            "type": "string|number|boolean|date|datetime|email|phone|uuid|text",
+            "description": "Clear description of the field",
+            "constraints": {
+              "min": number,
+              "max": number,
+              "required": boolean,
+              "unique": boolean
+            },
+            "examples": ["example1", "example2", "example3"]
+          }
+        },
+        "detectedDomain": "detected_domain_from_description",
+        "estimatedRows": number,
+        "relationships": ["description of data relationships"],
+        "suggestions": ["suggestions for data generation"]
+      }
+      
+      Make sure the schema is realistic and comprehensive for the described use case.
+    `;
+      };
+    try {
+      const result = await this.model.generateContent(prompt);
+      const response = await result.response;
+      
+      let text = response.text();
+      
+      // Clean up the response
+      if (text.includes('```json')) {
+        text = text.split('```json')[1].split('```')[0];
+      } else if (text.includes('```')) {
+        text = text.split('```')[1];
+      }
+      
+      text = text.trim();
+      
+      const parsed = JSON.parse(text);
+      
+      // Validate and enhance the schema
+      if (!parsed.schema) {
+        throw new Error('Invalid schema format');
+      }
+      
+      return {
+        schema: parsed.schema,
+        detectedDomain: parsed.detectedDomain || domain,
+        estimatedRows: parsed.estimatedRows || 10000,
+        relationships: parsed.relationships || [],
+        suggestions: parsed.suggestions || []
+      };
+      
+    } catch (error) {
+      console.error('Failed to generate schema from natural language:', error);
+      
+      // Return a basic schema based on common patterns
+      return {
+        schema: this.generateFallbackSchema(description, domain),
+        detectedDomain: domain,
+        estimatedRows: 10000,
+        relationships: [],
+        suggestions: ["Error generating schema - using fallback"]
+      };
+    }
+  }
+
+  private generateFallbackSchema(description: string, domain: string) {
+    const commonFields = {
+      id: { type: 'uuid', description: 'Unique identifier' },
+      created_at: { type: 'datetime', description: 'Creation timestamp' },
+      updated_at: { type: 'datetime', description: 'Last update timestamp' }
+    };
+
+    // Domain-specific fields
+    const domainFields: any = {
+      healthcare: {
+        patient_id: { type: 'string', description: 'Patient identifier' },
+        age: { type: 'number', description: 'Patient age', constraints: { min: 0, max: 120 } },
+        gender: { type: 'string', description: 'Patient gender', examples: ['Male', 'Female', 'Other'] },
+        diagnosis: { type: 'string', description: 'Medical diagnosis' }
+      },
+      finance: {
+        account_id: { type: 'string', description: 'Account identifier' },
+        amount: { type: 'number', description: 'Transaction amount' },
+        currency: { type: 'string', description: 'Currency code', examples: ['USD', 'EUR', 'GBP'] },
+        transaction_type: { type: 'string', description: 'Type of transaction', examples: ['credit', 'debit'] }
+      },
+      retail: {
+        customer_id: { type: 'string', description: 'Customer identifier' },
+        product_name: { type: 'string', description: 'Product name' },
+        price: { type: 'number', description: 'Product price', constraints: { min: 0 } },
+        category: { type: 'string', description: 'Product category' }
+      }
+    };
+    }
+    return {
+      ...commonFields,
+      ...(domainFields[domain] || {
+        name: { type: 'string', description: 'Name field' },
+        value: { type: 'number', description: 'Numeric value' },
+        status: { type: 'string', description: 'Status field', examples: ['active', 'inactive'] }
+      })
+    };
+  }
 }

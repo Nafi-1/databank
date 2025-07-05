@@ -1,5 +1,6 @@
 import { GeminiService } from './gemini';
 import { supabase } from './supabase';
+import { v4 as uuidv4 } from 'uuid';
 
 export class DataGeneratorService {
   private gemini = new GeminiService();
@@ -18,6 +19,91 @@ export class DataGeneratorService {
     } catch (error) {
       console.error('Error processing uploaded data:', error);
       throw error;
+    }
+  }
+
+  async generateSchemaFromDescription(
+    description: string, 
+    domain: string, 
+    dataType: string
+  ) {
+    try {
+      console.log('Generating schema from description:', { description, domain, dataType });
+      
+      const schema = await this.gemini.generateSchemaFromNaturalLanguage(
+        description,
+        domain,
+        dataType
+      );
+      
+      // Generate sample data based on the schema
+      const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
+      
+      return {
+        ...schema,
+        sampleData,
+        detectedDomain: schema.detectedDomain || domain
+      };
+    } catch (error) {
+      console.error('Error generating schema from description:', error);
+      throw error;
+    }
+  }
+
+  private generateSampleDataFromSchema(schema: any, rowCount: number = 5): any[] {
+    const sampleData = [];
+    
+    for (let i = 0; i < rowCount; i++) {
+      const row: any = {};
+      
+      Object.entries(schema).forEach(([fieldName, fieldInfo]: [string, any]) => {
+        row[fieldName] = this.generateSampleValue(fieldInfo, i);
+      });
+      
+      sampleData.push(row);
+    }
+    
+    return sampleData;
+  }
+
+  private generateSampleValue(fieldInfo: any, index: number): any {
+    const { type, constraints, examples } = fieldInfo;
+    
+    switch (type) {
+      case 'string':
+        if (examples && examples.length > 0) {
+          return examples[index % examples.length];
+        }
+        return `sample_${fieldInfo.name || 'value'}_${index + 1}`;
+        
+      case 'number':
+      case 'integer':
+        const min = constraints?.min || 1;
+        const max = constraints?.max || 100;
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+        
+      case 'boolean':
+        return Math.random() > 0.5;
+        
+      case 'date':
+      case 'datetime':
+        const now = new Date();
+        const randomDays = Math.floor(Math.random() * 365);
+        const date = new Date(now.getTime() - randomDays * 24 * 60 * 60 * 1000);
+        return type === 'date' ? date.toISOString().split('T')[0] : date.toISOString();
+        
+      case 'email':
+        return `user${index + 1}@example.com`;
+        
+      case 'phone':
+        return `+1-555-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
+        
+      case 'id':
+      case 'uuid':
+        return uuidv4();
+        
+      default:
+        return `sample_value_${index + 1}`;
     }
   }
 
