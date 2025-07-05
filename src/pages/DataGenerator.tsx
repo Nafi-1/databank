@@ -904,14 +904,3 @@ const DataGenerator: React.FC = () => {
 };
 
 export default DataGenerator;
-```
-            </motion.div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-```
-export default DataGenerator;
