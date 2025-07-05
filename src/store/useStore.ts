@@ -5,6 +5,7 @@ import { Project, Dataset, GenerationJob } from '../lib/supabase';
 interface AppState {
   // Auth state
   user: User | null;
+  isGuest: boolean;
   isLoading: boolean;
   
   // Project state
@@ -22,6 +23,7 @@ interface AppState {
   
   // Actions
   setUser: (user: User | null) => void;
+  setGuest: (isGuest: boolean) => void;
   setLoading: (loading: boolean) => void;
   setCurrentProject: (project: Project | null) => void;
   setProjects: (projects: Project[]) => void;
@@ -40,6 +42,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   // Initial state
   user: null,
+  isGuest: false,
   isLoading: true,
   currentProject: null,
   projects: [],
@@ -51,6 +54,7 @@ export const useStore = create<AppState>((set) => ({
 
   // Actions
   setUser: (user) => set({ user }),
+  setGuest: (isGuest) => set({ isGuest }),
   setLoading: (isLoading) => set({ isLoading }),
   
   setCurrentProject: (currentProject) => set({ currentProject }),

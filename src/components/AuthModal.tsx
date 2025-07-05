@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Mail, Lock, User, Brain } from 'lucide-react';
+import { X, Mail, Lock, User, Brain, Chrome } from 'lucide-react';
 import { AuthService } from '../lib/auth';
 import { useStore } from '../store/useStore';
 import toast from 'react-hot-toast';
@@ -57,6 +57,23 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       }
     } catch (error) {
       toast.error('An unexpected error occurred');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    try {
+      const { error } = await authService.signInWithGoogle();
+      if (error) {
+        toast.error(error.message);
+      } else {
+        toast.success('Redirecting to Google...');
+        // The redirect will handle the rest
+      }
+    } catch (error) {
+      toast.error('Google sign-in failed');
     } finally {
       setIsLoading(false);
     }
@@ -180,6 +197,26 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 )}
               </button>
             </form>
+
+            <div className="mt-6">
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-600"></div>
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-800 text-gray-400">Or continue with</span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleGoogleSignIn}
+                disabled={isLoading}
+                className="mt-4 w-full py-3 px-4 bg-white text-gray-900 rounded-lg font-semibold hover:bg-gray-100 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Chrome className="w-5 h-5" />
+                Continue with Google
+              </button>
+            </div>
 
             <div className="mt-6 text-center">
               <button
