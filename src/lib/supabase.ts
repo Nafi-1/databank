@@ -3,9 +3,50 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
+// Validate environment variables
+function validateSupabaseConfig() {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Missing Supabase environment variables. Please check your .env file.');
+  }
+  
+  // Check if they're still placeholder values
+  if (supabaseUrl.includes('your_supabase') || supabaseUrl === 'your_supabase_project_url') {
+    throw new Error(`
+🔧 Supabase Setup Required!
+
+Please configure your Supabase credentials in .env file:
+
+1. Go to https://supabase.com and create a project
+2. Get your Project URL and Anon Key from Settings > API
+3. Update your .env file:
+   VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key
+
+Current URL: ${supabaseUrl}
+    `);
+  }
+  
+  // Validate URL format
+  try {
+    new URL(supabaseUrl);
+  } catch (e) {
+    throw new Error(`Invalid Supabase URL format: ${supabaseUrl}. Please check your .env file.`);
+  }
+  
+  if (supabaseAnonKey.includes('your_supabase') || supabaseAnonKey === 'your_supabase_anon_key') {
+    throw new Error(`
+🔧 Supabase API Key Required!
+
+Please set your Supabase Anon Key in .env file:
+VITE_SUPABASE_ANON_KEY=your-actual-anon-key
+
+Get it from: https://supabase.com → Your Project → Settings → API
+    `);
+  }
 }
+
+// Validate before creating client
+validateSupabaseConfig();
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
