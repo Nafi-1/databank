@@ -39,13 +39,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Optional authentication - allow unauthenticated access for guest users
+from fastapi.security import HTTPBearer
+from fastapi import Request, HTTPException
+
+class OptionalHTTPBearer(HTTPBearer):
+    """Modified HTTPBearer that doesn't require authentication for guests"""
+    async def __call__(self, request: Request):
+        try:
+            return await super().__call__(request)
+        except HTTPException:
+            # Return None for unauthenticated requests (guests)
+            return None
+
 # Initialize services
 redis_service = RedisService()
 supabase_service = SupabaseService()
 manager = ConnectionManager()
 
-# Security
-security = HTTPBearer()
+# Optional security for guest access
+security = OptionalHTTPBearer(auto_error=False)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
@@ -95,7 +108,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 @app.get("/api/system/status")
 async def system_status(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Get real-time system status"""
-    user = await verify_token(credentials.credentials)
+    # Allow both authenticated users and guests
+    user = None
+    if credentials:
+        try:
+            user = await verify_token(credentials.credentials)
+        except:
+            pass
     
     # Get real-time metrics from Redis
     metrics = await redis_service.get_system_metrics()
@@ -106,7 +125,8 @@ async def system_status(credentials: HTTPAuthorizationCredentials = Depends(secu
         "active_generations": metrics.get("active_generations", 0),
         "total_datasets": metrics.get("total_datasets", 0),
         "agent_status": await redis_service.get_agent_status(),
-        "performance_metrics": await redis_service.get_performance_metrics()
+        "performance_metrics": await redis_service.get_performance_metrics(),
+        "user_type": "guest" if (user and user.get("is_guest")) else "authenticated" if user else "anonymous"
     }
 
 if __name__ == "__main__":

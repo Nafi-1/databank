@@ -30,20 +30,29 @@ export class DataGeneratorService {
     try {
       console.log('Generating schema from description:', { description, domain, dataType });
       
-      const schema = await this.gemini.generateSchemaFromNaturalLanguage(
-        description,
-        domain,
-        dataType
-      );
+      // Try to use backend API first
+      try {
+        const schema = await ApiService.generateSchemaFromDescription(description, domain, dataType);
+        return schema;
+      } catch (backendError) {
+        console.log('Backend unavailable, using local Gemini service');
+        // Fallback to local Gemini service
+        const schema = await this.gemini.generateSchemaFromNaturalLanguage(
+          description,
+          domain,
+          dataType
+        );
+        
+        // Generate sample data based on the schema
+        const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
+        
+        return {
+          ...schema,
+          sampleData,
+          detectedDomain: schema.detectedDomain || domain
+        };
+      }
       
-      // Generate sample data based on the schema
-      const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
-      
-      return {
-        ...schema,
-        sampleData,
-        detectedDomain: schema.detectedDomain || domain
-      };
     } catch (error) {
       console.error('Error generating schema from description:', error);
       throw error;
@@ -223,6 +232,17 @@ export class DataGeneratorService {
 
   async generateSyntheticDataset(config: any) {
     try {
+      // For guests, try local generation first
+      if (config.isGuest) {
+        try {
+          const result = await ApiService.generateLocalData(config);
+          return result;
+        } catch (backendError) {
+          console.log('Backend unavailable, using local generation');
+          // Continue with local generation below
+        }
+      }
+      
       // Step 1: Schema Analysis
       const schemaAnalysis = await this.gemini.analyzeDataSchema(config.sourceData || []);
       
@@ -233,7 +253,15 @@ export class DataGeneratorService {
       const biasAnalysis = await this.gemini.detectBias(config.sourceData || [], config);
       
       // Step 4: Generate Synthetic Data
-      const syntheticData = await this.gemini.generateSyntheticData(schemaAnalysis?.schema || {}, config);
+      let syntheticData;
+      
+      if (config.schema && Object.keys(config.schema).length > 0) {
+        // Use provided schema for generation
+        syntheticData = await this.gemini.generateSyntheticDataFromSchema(config.schema, config, config.description || '');
+      } else {
+        // Use analyzed schema
+        syntheticData = await this.gemini.generateSyntheticData(schemaAnalysis?.schema || {}, config);
+      }
       
       // Step 5: Quality Assessment
       const qualityScore = this.assessDataQuality(syntheticData, config.sourceData || []);

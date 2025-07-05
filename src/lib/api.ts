@@ -51,6 +51,21 @@ export class ApiService {
     return response.data;
   }
 
+  // Schema generation from natural language
+  static async generateSchemaFromDescription(description: string, domain: string, dataType: string) {
+    const response = await api.post('/generation/schema-from-description', {
+      description,
+      domain,
+      data_type: dataType
+    });
+    return response.data;
+  }
+
+  // Local data generation for guests
+  static async generateLocalData(config: any) {
+    const response = await api.post('/generation/generate-local', config);
+    return response.data;
+  }
   // Analytics endpoints
   static async getSystemMetrics() {
     const response = await api.get('/analytics/metrics');

@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 import json
 import asyncio
 from datetime import datetime
+import uuid
 
 from ..config import settings
 
@@ -218,6 +219,166 @@ class GeminiService:
             print(f"Error in relationship mapping: {e}")
             return {"preservation_score": 85, "error": str(e)}
             
+    async def generate_schema_from_natural_language(
+        self,
+        description: str,
+        domain: str = 'general',
+        data_type: str = 'tabular'
+    ) -> Dict[str, Any]:
+        """Generate schema from natural language description"""
+        
+        prompt = f"""
+        Based on this natural language description, generate a detailed database schema:
+        
+        Description: "{description}"
+        Domain: {domain}
+        Data Type: {data_type}
+        
+        Please analyze the description and create a comprehensive schema that includes:
+        
+        1. Field names that match the described data
+        2. Appropriate data types (string, number, boolean, date, email, phone, etc.)
+        3. Constraints where applicable (min/max values, required fields)
+        4. Sample values or examples for each field
+        5. Relationships between fields if applicable
+        6. Domain-specific field suggestions
+        
+        Return the response as JSON with this exact structure:
+        {{
+          "schema": {{
+            "field_name": {{
+              "type": "string|number|boolean|date|datetime|email|phone|uuid|text",
+              "description": "Clear description of the field",
+              "constraints": {{
+                "min": number,
+                "max": number,
+                "required": boolean,
+                "unique": boolean
+              }},
+              "examples": ["example1", "example2", "example3"]
+            }}
+          }},
+          "detected_domain": "detected_domain_from_description",
+          "estimated_rows": number,
+          "relationships": ["description of data relationships"],
+          "suggestions": ["suggestions for data generation"]
+        }}
+        
+        Make sure the schema is realistic and comprehensive for the described use case.
+        """
+        
+        try:
+            response = await self._generate_content_async(prompt)
+            result = self._parse_json_response(response)
+            
+            # Generate sample data from schema
+            sample_data = self._generate_sample_data_from_schema(result.get('schema', {}), 5)
+            result['sample_data'] = sample_data
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error generating schema from natural language: {e}")
+            # Return fallback schema
+            return self._generate_fallback_schema_response(description, domain)
+    
+    def _generate_sample_data_from_schema(self, schema: Dict[str, Any], num_rows: int = 5) -> List[Dict[str, Any]]:
+        """Generate sample data from schema definition"""
+        sample_data = []
+        
+        for i in range(num_rows):
+            row = {}
+            for field_name, field_info in schema.items():
+                row[field_name] = self._generate_sample_value(field_info, i)
+            sample_data.append(row)
+        
+        return sample_data
+    
+    def _generate_sample_value(self, field_info: Dict[str, Any], index: int):
+        """Generate a sample value based on field type and constraints"""
+        field_type = field_info.get('type', 'string')
+        constraints = field_info.get('constraints', {})
+        examples = field_info.get('examples', [])
+        
+        if examples and len(examples) > 0:
+            return examples[index % len(examples)]
+        
+        if field_type in ['string', 'text']:
+            return f"sample_{field_info.get('description', 'value').lower().replace(' ', '_')}_{index + 1}"
+        elif field_type in ['number', 'integer']:
+            min_val = constraints.get('min', 1)
+            max_val = constraints.get('max', 100)
+            return min_val + (index * (max_val - min_val) // 10)
+        elif field_type == 'boolean':
+            return index % 2 == 0
+        elif field_type in ['date', 'datetime']:
+            from datetime import datetime, timedelta
+            base_date = datetime.now() - timedelta(days=365)
+            return (base_date + timedelta(days=index * 30)).isoformat()
+        elif field_type == 'email':
+            return f"user{index + 1}@example.com"
+        elif field_type == 'phone':
+            return f"+1-555-{(1000 + index):04d}"
+        elif field_type == 'uuid':
+            return str(uuid.uuid4())
+        else:
+            return f"sample_value_{index + 1}"
+    
+    def _generate_fallback_schema_response(self, description: str, domain: str) -> Dict[str, Any]:
+        """Generate a fallback schema when AI generation fails"""
+        base_schema = {
+            "id": {
+                "type": "uuid",
+                "description": "Unique identifier",
+                "constraints": {"required": True, "unique": True},
+                "examples": [str(uuid.uuid4()) for _ in range(3)]
+            },
+            "created_at": {
+                "type": "datetime",
+                "description": "Creation timestamp",
+                "constraints": {"required": True},
+                "examples": [datetime.now().isoformat()]
+            }
+        }
+        
+        # Add domain-specific fields
+        domain_fields = self._get_domain_specific_fields(domain)
+        base_schema.update(domain_fields)
+        
+        return {
+            "schema": base_schema,
+            "detected_domain": domain,
+            "estimated_rows": 10000,
+            "relationships": ["Basic entity relationships"],
+            "suggestions": ["Configure AI for better schema generation"],
+            "sample_data": self._generate_sample_data_from_schema(base_schema, 3)
+        }
+    
+    def _get_domain_specific_fields(self, domain: str) -> Dict[str, Any]:
+        """Get domain-specific fields for fallback schema"""
+        domain_fields = {
+            "healthcare": {
+                "patient_id": {"type": "string", "description": "Patient identifier"},
+                "age": {"type": "number", "description": "Patient age", "constraints": {"min": 0, "max": 120}},
+                "diagnosis": {"type": "string", "description": "Medical diagnosis"}
+            },
+            "finance": {
+                "account_id": {"type": "string", "description": "Account identifier"},
+                "amount": {"type": "number", "description": "Transaction amount"},
+                "transaction_type": {"type": "string", "description": "Transaction type"}
+            },
+            "retail": {
+                "product_name": {"type": "string", "description": "Product name"},
+                "price": {"type": "number", "description": "Product price"},
+                "category": {"type": "string", "description": "Product category"}
+            }
+        }
+        
+        return domain_fields.get(domain, {
+            "name": {"type": "string", "description": "Entity name"},
+            "value": {"type": "number", "description": "Numeric value"},
+            "status": {"type": "string", "description": "Status field"}
+        })
     async def assess_data_quality(
         self, 
         synthetic_data: List[Dict[str, Any]], 
@@ -269,6 +430,69 @@ class GeminiService:
         except Exception as e:
             print(f"Error in quality assessment: {e}")
             return {"overall_score": 85, "error": str(e)}
+    async def generate_synthetic_data_from_schema(
+        self, 
+        schema: Dict[str, Any], 
+        config: Dict[str, Any],
+        description: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Generate synthetic data from schema definition"""
+        
+        row_count = config.get('rowCount', 100)
+        
+        prompt = f"""
+        Generate {row_count} rows of realistic synthetic data based on this schema:
+        
+        Schema: {json.dumps(schema, indent=2)}
+        Original Description: "{description}"
+        Configuration: {json.dumps(config, indent=2)}
+        
+        Generate data that:
+        1. Follows the exact schema structure
+        2. Uses realistic values for each field type
+        3. Maintains data relationships and constraints
+        4. Ensures variety and realistic distribution
+        5. Follows domain-specific patterns when applicable
+        
+        Return as a JSON array of {row_count} objects, each following the schema exactly.
+        Make sure all field names match the schema and all values are appropriate for their types.
+        """
+        
+        try:
+            response = await self._generate_content_async(prompt)
+            text = response.text if hasattr(response, 'text') else str(response)
+            
+            # Clean and parse JSON
+            if text.startswith('```json'):
+                text = text.split('```json')[1].split('```')[0]
+            elif text.startswith('```'):
+                text = text.split('```')[1]
+            
+            text = text.strip()
+            data = json.loads(text)
+            
+            # Validate data structure
+            if isinstance(data, list) and len(data) > 0:
+                return data[:row_count]  # Limit to requested count
+            else:
+                raise ValueError("Invalid data format returned")
+                
+        except Exception as e:
+            print(f"Error generating synthetic data from schema: {e}")
+            # Generate fallback data
+            return self._generate_fallback_data_from_schema(schema, row_count)
+    
+    def _generate_fallback_data_from_schema(self, schema: Dict[str, Any], row_count: int) -> List[Dict[str, Any]]:
+        """Generate fallback data when AI generation fails"""
+        fallback_data = []
+        
+        for i in range(row_count):
+            row = {}
+            for field_name, field_info in schema.items():
+                row[field_name] = self._generate_sample_value(field_info, i)
+            fallback_data.append(row)
+        
+        return fallback_data
             
     async def generate_synthetic_data_advanced(self, context_prompt: str) -> List[Dict[str, Any]]:
         """Generate synthetic data with advanced context"""

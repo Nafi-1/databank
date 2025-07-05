@@ -7,6 +7,8 @@ class GenerationRequest(BaseModel):
     domain: str
     data_type: str  # tabular, timeseries, text, image
     source_data: List[Dict[str, Any]] = []
+    schema: Dict[str, Any] = {}
+    description: Optional[str] = None
     config: Dict[str, Any] = {}
     
     class Config:
@@ -14,10 +16,16 @@ class GenerationRequest(BaseModel):
             "example": {
                 "domain": "healthcare",
                 "data_type": "tabular",
+                "description": "Generate patient data with demographics and medical history",
                 "source_data": [
                     {"patient_id": "P001", "age": 45, "diagnosis": "diabetes"},
                     {"patient_id": "P002", "age": 32, "diagnosis": "hypertension"}
                 ],
+                "schema": {
+                    "patient_id": {"type": "string", "description": "Patient identifier"},
+                    "age": {"type": "number", "description": "Patient age"},
+                    "diagnosis": {"type": "string", "description": "Medical diagnosis"}
+                },
                 "config": {
                     "row_count": 10000,
                     "privacy_level": "maximum",
