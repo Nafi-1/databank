@@ -180,6 +180,7 @@ const DataGenerator: React.FC = () => {
           sourceData,
           schema,
           description: naturalLanguageDescription,
+          isGuest: true,
           ...generationConfig
         });
         

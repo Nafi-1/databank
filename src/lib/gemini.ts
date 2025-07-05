@@ -212,6 +212,9 @@ export class GeminiService {
         },
         detectedDomain: domain,
         suggestions: ["Configure Gemini API for advanced schema generation"]
+      };
+    }
+
     const prompt = `
       Based on this natural language description, generate a detailed database schema:
       
@@ -251,7 +254,7 @@ export class GeminiService {
       
       Make sure the schema is realistic and comprehensive for the described use case.
     `;
-      };
+
     try {
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
@@ -324,7 +327,7 @@ export class GeminiService {
         category: { type: 'string', description: 'Product category' }
       }
     };
-    }
+
     return {
       ...commonFields,
       ...(domainFields[domain] || {
@@ -333,5 +336,110 @@ export class GeminiService {
         status: { type: 'string', description: 'Status field', examples: ['active', 'inactive'] }
       })
     };
+  }
+
+  async generateSyntheticDataFromSchema(
+    schema: any, 
+    config: any, 
+    description: string = ""
+  ): Promise<any[]> {
+    if (!this.model) {
+      // Return mock data when Gemini is not configured
+      return this._generateFallbackDataFromSchema(schema, config.rowCount || 100);
+    }
+
+    const prompt = `
+      Generate ${config.rowCount || 100} rows of realistic synthetic data based on this schema:
+      
+      Schema: ${JSON.stringify(schema, null, 2)}
+      Original Description: "${description}"
+      Configuration: ${JSON.stringify(config, null, 2)}
+      
+      Generate data that:
+      1. Follows the exact schema structure
+      2. Uses realistic values for each field type
+      3. Maintains data relationships and constraints
+      4. Ensures variety and realistic distribution
+      5. Follows domain-specific patterns when applicable
+      
+      Return as a JSON array of ${config.rowCount || 100} objects.
+    `;
+
+    try {
+      const result = await this.model.generateContent(prompt);
+      const response = await result.response;
+      
+      let text = response.text();
+      
+      // Clean and parse JSON
+      if (text.includes('```json')) {
+        text = text.split('```json')[1].split('```')[0];
+      } else if (text.includes('```')) {
+        text = text.split('```')[1];
+      }
+      
+      text = text.trim();
+      const data = JSON.parse(text);
+      
+      if (Array.isArray(data) && data.length > 0) {
+        return data.slice(0, config.rowCount || 100);
+      } else {
+        throw new Error('Invalid data format returned');
+      }
+    } catch (error) {
+      console.error('Failed to generate synthetic data from schema:', error);
+      return this._generateFallbackDataFromSchema(schema, config.rowCount || 100);
+    }
+  }
+
+  private _generateFallbackDataFromSchema(schema: any, rowCount: number): any[] {
+    const fallbackData = [];
+    
+    for (let i = 0; i < rowCount; i++) {
+      const row: any = {};
+      for (const [fieldName, fieldInfo] of Object.entries(schema)) {
+        row[fieldName] = this._generateSampleValue(fieldInfo as any, i);
+      }
+      fallbackData.push(row);
+    }
+    
+    return fallbackData;
+  }
+
+  private _generateSampleValue(fieldInfo: any, index: number): any {
+    const fieldType = fieldInfo.type || 'string';
+    const constraints = fieldInfo.constraints || {};
+    const examples = fieldInfo.examples || [];
+    
+    if (examples && examples.length > 0) {
+      return examples[index % examples.length];
+    }
+    
+    switch (fieldType) {
+      case 'string':
+      case 'text':
+        return `sample_${fieldInfo.description?.toLowerCase().replace(/\s+/g, '_') || 'value'}_${index + 1}`;
+      case 'number':
+      case 'integer':
+        const min = constraints.min || 1;
+        const max = constraints.max || 100;
+        return min + Math.floor(Math.random() * (max - min + 1));
+      case 'boolean':
+        return Math.random() > 0.5;
+      case 'date':
+      case 'datetime':
+        const now = new Date();
+        const randomDays = Math.floor(Math.random() * 365);
+        const date = new Date(now.getTime() - randomDays * 24 * 60 * 60 * 1000);
+        return fieldType === 'date' ? date.toISOString().split('T')[0] : date.toISOString();
+      case 'email':
+        return `user${index + 1}@example.com`;
+      case 'phone':
+        return `+1-555-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
+      case 'uuid':
+        return crypto.randomUUID ? crypto.randomUUID() : `uuid-${index}-${Date.now()}`;
+      default:
+        return `sample_value_${index + 1}`;
+    }
   }
 }
