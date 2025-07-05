@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 
 // Create axios instance with base URL
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: import.meta.env.DEV ? 'http://localhost:8000/api' : '/api',
   timeout: 30000,
 });
 

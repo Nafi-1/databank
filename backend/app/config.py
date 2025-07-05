@@ -3,16 +3,16 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    supabase_url: str
-    supabase_key: str
-    supabase_service_role_key: str
+    supabase_url: str = "your_supabase_url"
+    supabase_key: str = "your_supabase_anon_key" 
+    supabase_service_role_key: str = "your_supabase_service_role_key"
     
     # Redis
     redis_url: str = "redis://localhost:6379"
     redis_password: Optional[str] = None
     
     # AI Services
-    gemini_api_key: str
+    gemini_api_key: str = "your_gemini_api_key"
     google_cloud_project_id: Optional[str] = None
     
     # Vector Database
