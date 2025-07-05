@@ -119,29 +119,75 @@ const DataGenerator: React.FC = () => {
   });
 
   const handleGenerateSchema = async () => {
-    if (!naturalLanguageDescription.trim()) {
+    const description = naturalLanguageDescription.trim();
+    
+    if (!description) {
       toast.error('Please describe the data you want to generate');
+      return;
+    }
+    
+    if (description.length < 10) {
+      toast.error('Please provide a more detailed description (at least 10 characters)');
+      return;
+    }
+    
+    if (!selectedDomain) {
+      toast.error('Please select a domain first');
+      return;
+    }
+    
+    if (!selectedDataType) {
+      toast.error('Please select a data type first');
       return;
     }
 
     setIsGeneratingSchema(true);
     toast.loading('Generating schema from your description...');
+    
+    // Clear any previous schema
+    setGeneratedSchema(null);
 
     try {
+      console.log('Starting schema generation with:', {
+        description,
+        selectedDomain,
+        selectedDataType
+      });
+      
       const schema = await dataService.generateSchemaFromDescription(
-        naturalLanguageDescription,
+        description,
         selectedDomain,
         selectedDataType
       );
       
+      console.log('Schema generated successfully:', schema);
+      
+      // Validate the schema response
+      if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
+        throw new Error('Generated schema is empty or invalid');
+      }
+      
       setGeneratedSchema(schema);
       setGenerationStep(2);
+      
       toast.dismiss();
-      toast.success('Schema generated successfully!');
+      toast.success(`Schema generated successfully! Found ${Object.keys(schema.schema).length} fields.`);
+      
     } catch (error) {
+      console.error('Schema generation failed:', error);
       toast.dismiss();
-      toast.error('Failed to generate schema. Please try again.');
-      console.error('Schema generation error:', error);
+      
+      // Provide specific error messages
+      if (error.message.includes('API key') || error.message.includes('configured')) {
+        toast.error('AI service not configured. Please check your API keys.');
+      } else if (error.message.includes('network') || error.message.includes('connection')) {
+        toast.error('Network error. Please check your connection and try again.');
+      } else {
+        toast.error(`Failed to generate schema: ${error.message}`);
+      }
+      
+      // Reset generation step if failed
+      setGenerationStep(1);
     } finally {
       setIsGeneratingSchema(false);
     }
@@ -369,9 +415,15 @@ const DataGenerator: React.FC = () => {
 
                 <button
                   onClick={handleGenerateSchema}
-                  disabled={isGeneratingSchema || !naturalLanguageDescription.trim()}
+                  disabled={isGeneratingSchema || !naturalLanguageDescription.trim() || !selectedDomain || !selectedDataType}
+                  title={
+                    !naturalLanguageDescription.trim() ? 'Please enter a description' :
+                    !selectedDomain ? 'Please select a domain first' :
+                    !selectedDataType ? 'Please select a data type first' :
+                    'Generate schema from description'
+                  }
                   className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-300 ${
-                    isGeneratingSchema || !naturalLanguageDescription.trim()
+                    isGeneratingSchema || !naturalLanguageDescription.trim() || !selectedDomain || !selectedDataType
                       ? 'bg-gray-600 cursor-not-allowed'
                       : 'bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600'
                   } text-white flex items-center justify-center gap-2`}
@@ -388,6 +440,15 @@ const DataGenerator: React.FC = () => {
                     </>
                   )}
                 </button>
+                
+                {/* Show helpful hints */}
+                {naturalLanguageDescription.trim() && (!selectedDomain || !selectedDataType) && (
+                  <div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                    <p className="text-sm text-yellow-300">
+                      💡 Please select a domain and data type above before generating the schema.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -577,6 +638,13 @@ const DataGenerator: React.FC = () => {
               disabled={isGenerating || !selectedDomain || !selectedDataType || 
                 (inputMethod === 'describe' && !generatedSchema) || 
                 (inputMethod === 'upload' && !uploadedData)}
+              title={
+                !selectedDomain ? 'Please select a domain first' :
+                !selectedDataType ? 'Please select a data type first' :
+                inputMethod === 'describe' && !generatedSchema ? 'Please generate schema first' :
+                inputMethod === 'upload' && !uploadedData ? 'Please upload data first' :
+                'Generate synthetic data'
+              }
               className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-300 ${
                 isGenerating || !selectedDomain || !selectedDataType ||
                 (inputMethod === 'describe' && !generatedSchema) ||
@@ -597,6 +665,18 @@ const DataGenerator: React.FC = () => {
                 </>
               )}
             </button>
+            
+            {/* Debug info for development */}
+            {import.meta.env.DEV && (
+              <div className="mt-2 p-2 bg-gray-700/20 rounded text-xs text-gray-400">
+                <div>Domain: {selectedDomain || 'Not selected'}</div>
+                <div>Data Type: {selectedDataType || 'Not selected'}</div>
+                <div>Input Method: {inputMethod}</div>
+                <div>Generated Schema: {generatedSchema ? 'Yes' : 'No'}</div>
+                <div>Uploaded Data: {uploadedData ? 'Yes' : 'No'}</div>
+                <div>Schema Fields: {generatedSchema ? Object.keys(generatedSchema.schema || {}).length : 0}</div>
+              </div>
+            )}
           </motion.div>
 
           {/* Generation Progress */}
@@ -703,20 +783,59 @@ const DataGenerator: React.FC = () => {
               <div className="mt-4 p-3 bg-gray-700/30 rounded-lg">
                 <p className="text-xs text-gray-400 mb-2">Schema Preview:</p>
                 <div className="space-y-1">
-                  {Object.entries(generatedSchema.schema || {}).slice(0, 3).map(([key, value]: [string, any]) => (
-                    <div key={key} className="flex justify-between text-xs">
-                      <span className="text-gray-300">{key}</span>
-                      <span className="text-purple-400">{value.type}</span>
-                    </div>
-                  ))}
-                  {Object.keys(generatedSchema.schema || {}).length > 3 && (
-                    <p className="text-xs text-gray-400">... and {Object.keys(generatedSchema.schema || {}).length - 3} more</p>
+                  {generatedSchema.schema && Object.keys(generatedSchema.schema).length > 0 ? (
+                    <>
+                      {Object.entries(generatedSchema.schema).slice(0, 3).map(([key, value]: [string, any]) => (
+                        <div key={key} className="flex justify-between text-xs">
+                          <span className="text-gray-300">{key}</span>
+                          <span className="text-purple-400">{value.type || 'unknown'}</span>
+                        </div>
+                      ))}
+                      {Object.keys(generatedSchema.schema).length > 3 && (
+                        <p className="text-xs text-gray-400">... and {Object.keys(generatedSchema.schema).length - 3} more</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-400">No schema fields available</p>
                   )}
                 </div>
+              </div>
+              
+              {/* Show generation button status for schema */}
+              <div className="mt-3 p-2 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <p className="text-sm text-green-300">
+                  ✅ Schema ready! You can now generate synthetic data.
+                </p>
               </div>
             </motion.div>
           )}
           
+          {/* Show error if schema generation failed */}
+          {inputMethod === 'describe' && naturalLanguageDescription && !generatedSchema && !isGeneratingSchema && (
+            <motion.div
+              className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg"
+              initial={{ x: 50, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              <h3 className="text-lg font-semibold text-red-300 mb-2">Schema Generation Failed</h3>
+              <p className="text-sm text-red-200 mb-3">
+                Unable to generate schema from your description. Please try:
+              </p>
+              <ul className="text-sm text-red-200 space-y-1">
+                <li>• Making your description more detailed</li>
+                <li>• Selecting a specific domain and data type first</li>
+                <li>• Checking your internet connection</li>
+              </ul>
+              <button
+                onClick={handleGenerateSchema}
+                className="mt-3 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-200 text-sm transition-all duration-200"
+              >
+                Try Again
+              </button>
+            </motion.div>
+          )}
+
           {/* Uploaded Data Info */}
           {uploadedData && inputMethod === 'upload' && (
             <motion.div
@@ -752,6 +871,30 @@ const DataGenerator: React.FC = () => {
                   </span>
                 </div>
               </div>
+              
+              <div className="mt-3 p-2 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <p className="text-sm text-green-300">
+                  ✅ Data uploaded and analyzed! You can now generate synthetic data.
+                </p>
+              </div>
+            </motion.div>
+          )}
+          
+          {/* Show error if file upload failed */}
+          {inputMethod === 'upload' && !uploadedData && (
+            <motion.div
+              className="p-4 bg-gray-700/30 rounded-lg border border-gray-600/30"
+              initial={{ x: 50, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">Upload Tips</h3>
+              <ul className="text-xs text-gray-400 space-y-1">
+                <li>• CSV files: Must have headers in the first row</li>
+                <li>• JSON files: Should contain an array of objects</li>
+                <li>• File size limit: 10MB</li>
+                <li>• Supported formats: .csv, .json</li>
+              </ul>
             </motion.div>
           )}
         </div>
@@ -760,4 +903,15 @@ const DataGenerator: React.FC = () => {
   );
 };
 
+export default DataGenerator;
+```
+            </motion.div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+```
 export default DataGenerator;

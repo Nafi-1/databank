@@ -10,18 +10,8 @@ from ..services.gemini_service import GeminiService
 from ..services.vector_service import VectorService
 from ..services.agent_orchestrator import AgentOrchestrator
 from ..services.supabase_service import SupabaseService
-from ..models.generation import GenerationRequest, GenerationResponse
+from ..models.generation import GenerationRequest, GenerationResponse, NaturalLanguageRequest, SchemaGenerationResponse
 
-class NaturalLanguageRequest(BaseModel):
-    description: str
-    domain: str = 'general'
-    data_type: str = 'tabular'
-    
-class SchemaGenerationResponse(BaseModel):
-    schema: Dict[str, Any]
-    detected_domain: str
-    sample_data: List[Dict[str, Any]]
-    suggestions: List[str]
 router = APIRouter()
 security = HTTPBearer()
 
@@ -39,13 +29,16 @@ async def generate_schema_from_description(
 ):
     """Generate schema from natural language description"""
     try:
+        print(f"Schema generation request: {request.description[:100]}... (domain: {request.domain}, type: {request.data_type})")
+        
         # Allow both authenticated users and guests
         user = None
-        try:
-            user = await verify_token(credentials.credentials)
-        except:
-            # Allow guest access
-            pass
+        if credentials:
+            try:
+                user = await verify_token(credentials.credentials)
+            except:
+                # Allow guest access
+                pass
             
         # Generate schema using Gemini
         schema_result = await gemini_service.generate_schema_from_natural_language(
@@ -53,6 +46,8 @@ async def generate_schema_from_description(
             request.domain,
             request.data_type
         )
+        
+        print(f"Generated schema with {len(schema_result.get('schema', {}))} fields")
         
         return SchemaGenerationResponse(
             schema=schema_result.get('schema', {}),
@@ -62,6 +57,7 @@ async def generate_schema_from_description(
         )
         
     except Exception as e:
+        print(f"Schema generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Schema generation failed: {str(e)}")
 @router.post("/start", response_model=GenerationResponse)
 async def start_generation(

@@ -124,29 +124,114 @@ export class DataGeneratorService {
         try {
           const content = e.target?.result as string;
           
+          console.log('File content preview:', content.substring(0, 200));
+          
           if (file.name.endsWith('.json')) {
-            resolve(JSON.parse(content));
+            try {
+              const jsonData = JSON.parse(content);
+              // Ensure we have an array
+              if (Array.isArray(jsonData)) {
+                resolve(jsonData);
+              } else if (jsonData && typeof jsonData === 'object') {
+                // If it's an object, wrap it in an array
+                resolve([jsonData]);
+              } else {
+                reject(new Error('JSON file must contain an array of objects or a single object'));
+              }
+            } catch (jsonError) {
+              reject(new Error(`Invalid JSON format: ${jsonError.message}`));
+            }
           } else if (file.name.endsWith('.csv')) {
-            const lines = content.split('\n').filter(line => line.trim());
-            const headers = lines[0].split(',').map(h => h.trim());
-            const data = lines.slice(1).map(line => {
-              const values = line.split(',');
-              const row: any = {};
-              headers.forEach((header, index) => {
-                row[header] = values[index]?.trim() || '';
-              });
-              return row;
-            });
-            resolve(data);
+            try {
+              const lines = content.split('\n').filter(line => line.trim());
+              
+              if (lines.length < 2) {
+                reject(new Error('CSV file must have at least a header row and one data row'));
+                return;
+              }
+              
+              // Handle CSV with potential quotes and commas inside values
+              const parseCSVLine = (line: string): string[] => {
+                const result = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let i = 0; i < line.length; i++) {
+                  const char = line[i];
+                  
+                  if (char === '"') {
+                    inQuotes = !inQuotes;
+                  } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                  } else {
+                    current += char;
+                  }
+                }
+                
+                result.push(current.trim());
+                return result;
+              };
+              
+              const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, '').trim());
+              
+              if (headers.length === 0) {
+                reject(new Error('CSV file must have valid headers'));
+                return;
+              }
+              
+              const data = [];
+              for (let i = 1; i < lines.length; i++) {
+                const values = parseCSVLine(lines[i]);
+                if (values.length > 0 && values.some(v => v.trim() !== '')) {
+                  const row: any = {};
+                  headers.forEach((header, index) => {
+                    let value = values[index]?.replace(/^"|"$/g, '')?.trim() || '';
+                    
+                    // Try to convert to appropriate types
+                    if (value !== '') {
+                      // Check if it's a number
+                      if (!isNaN(Number(value)) && value !== '') {
+                        row[header] = Number(value);
+                      } else if (value.toLowerCase() === 'true' || value.toLowerCase() === 'false') {
+                        row[header] = value.toLowerCase() === 'true';
+                      } else {
+                        row[header] = value;
+                      }
+                    } else {
+                      row[header] = null;
+                    }
+                  });
+                  data.push(row);
+                }
+              }
+              
+              if (data.length === 0) {
+                reject(new Error('CSV file contains no valid data rows'));
+                return;
+              }
+              
+              console.log('Parsed CSV data:', data.slice(0, 3));
+              resolve(data);
+            } catch (csvError) {
+              reject(new Error(`CSV parsing error: ${csvError.message}`));
+            }
+          } else if (file.name.endsWith('.xlsx')) {
+            reject(new Error('Excel files (.xlsx) are not supported yet. Please convert to CSV or JSON format.'));
           } else {
-            reject(new Error('Unsupported file format'));
+            reject(new Error(`Unsupported file format: ${file.name}. Please use CSV or JSON files.`));
           }
         } catch (error) {
-          reject(error);
+          console.error('File parsing error:', error);
+          reject(new Error(`Failed to parse file: ${error.message}`));
         }
       };
       
-      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.onerror = (error) => {
+        console.error('FileReader error:', error);
+        reject(new Error('Failed to read file. Please try again.'));
+      };
+      
       reader.readAsText(file);
     });
   }
@@ -203,6 +288,76 @@ export class DataGeneratorService {
     stats.duplicateRows = data.length - uniqueRows.size;
     
     return stats;
+  }
+
+  async generateSchemaFromDescription(
+    description: string, 
+    domain: string, 
+    dataType: string
+  ) {
+    try {
+      console.log('Generating schema from description:', { description, domain, dataType });
+      
+      // Validate inputs
+      if (!description || description.trim().length < 10) {
+        throw new Error('Description must be at least 10 characters long');
+      }
+      
+      if (!domain || !dataType) {
+        throw new Error('Domain and data type must be specified');
+      }
+      
+      // Try to use backend API first
+      try {
+        console.log('Attempting backend API call...');
+        const schema = await ApiService.generateSchemaFromDescription(description, domain, dataType);
+        console.log('Backend schema response:', schema);
+        
+        // Validate the response
+        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
+          throw new Error('Backend returned empty schema');
+        }
+        
+        return schema;
+      } catch (backendError) {
+        console.log('Backend unavailable, using local Gemini service:', backendError.message);
+        
+        // Fallback to local Gemini service
+        const schema = await this.gemini.generateSchemaFromNaturalLanguage(
+          description,
+          domain,
+          dataType
+        );
+        
+        console.log('Local Gemini schema response:', schema);
+        
+        // Validate the response
+        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
+          throw new Error('Failed to generate valid schema');
+        }
+        
+        // Generate sample data based on the schema
+        const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
+        
+        return {
+          ...schema,
+          sampleData,
+          detectedDomain: schema.detectedDomain || domain
+        };
+      }
+      
+    } catch (error) {
+      console.error('Error generating schema from description:', error);
+      
+      // Provide a more helpful error message
+      if (error.message.includes('API key')) {
+        throw new Error('AI service not configured. Schema generation requires API setup.');
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        throw new Error('Network error. Please check your connection and try again.');
+      } else {
+        throw new Error(`Schema generation failed: ${error.message}`);
+      }
+    }
   }
 
   private getNumberRange(values: number[]) {

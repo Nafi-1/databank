@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -59,3 +60,14 @@ class DataAnalysisResponse(BaseModel):
     recommendations: Dict[str, Any]
     estimated_time: str
     quality_score: float
+
+class NaturalLanguageRequest(BaseModel):
+    description: str
+    domain: str = 'general'
+    data_type: str = 'tabular'
+    
+class SchemaGenerationResponse(BaseModel):
+    schema: Dict[str, Any]
+    detected_domain: str
+    sample_data: List[Dict[str, Any]] = []
+    suggestions: List[str] = []

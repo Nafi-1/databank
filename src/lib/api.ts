@@ -53,18 +53,41 @@ export class ApiService {
 
   // Schema generation from natural language
   static async generateSchemaFromDescription(description: string, domain: string, dataType: string) {
-    const response = await api.post('/generation/schema-from-description', {
-      description,
-      domain,
-      data_type: dataType
-    });
-    return response.data;
+    try {
+      console.log('Making API request to generate schema:', { description, domain, dataType });
+      
+      const response = await api.post('/generation/schema-from-description', {
+        description,
+        domain,
+        data_type: dataType
+      });
+      
+      console.log('API response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('API request failed:', error);
+      
+      if (error.response?.status === 404) {
+        throw new Error('Backend service not available');
+      } else if (error.response?.status >= 500) {
+        throw new Error('Backend server error');
+      } else if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
+        throw new Error('Unable to connect to backend service');
+      }
+      
+      throw error;
+    }
   }
 
   // Local data generation for guests
   static async generateLocalData(config: any) {
-    const response = await api.post('/generation/generate-local', config);
-    return response.data;
+    try {
+      const response = await api.post('/generation/generate-local', config);
+      return response.data;
+    } catch (error) {
+      console.error('Local generation API request failed:', error);
+      throw error;
+    }
   }
   // Analytics endpoints
   static async getSystemMetrics() {
