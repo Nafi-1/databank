@@ -50,9 +50,9 @@ const DataGenerator: React.FC = () => {
     privacy_level: 'maximum'
   });
   
-  const { user, isGuest, currentProject } = useStore();
+  const { user, isGuest } = useStore();
   const dataService = new DataGeneratorService();
-  const { isConnected, lastMessage } = useWebSocket();
+  const { lastMessage } = useWebSocket();
 
   // Check backend health on component mount
   useEffect(() => {
@@ -84,7 +84,7 @@ const DataGenerator: React.FC = () => {
   // Listen for WebSocket updates
   useEffect(() => {
     if (lastMessage?.type === 'job_update') {
-      const { job_id, data } = lastMessage;
+      const { data } = lastMessage;
       if (data.progress !== undefined) {
         setGenerationProgress(data.progress);
       }
@@ -144,7 +144,7 @@ const DataGenerator: React.FC = () => {
         toast.success('File processed successfully!');
       } catch (error) {
         toast.dismiss();
-        toast.error(`Failed to process file: ${error.message}`);
+        toast.error(`Failed to process file: ${(error as Error).message}`);
         console.error('File processing error:', error);
       }
     },
@@ -174,7 +174,6 @@ const DataGenerator: React.FC = () => {
     }
 
     setIsGeneratingSchema(true);
-    const loadingToast = toast.loading('Generating schema from your description...');
     
     // Clear any previous schema
     setGeneratedSchema(null);
@@ -212,18 +211,21 @@ const DataGenerator: React.FC = () => {
     } catch (error) {
       console.error('❌ Schema generation failed:', error);
       toast.dismiss();
-      
+
+      // Narrow error to Error type for message access
+      const err = error as Error & { message?: string };
+
       // Provide specific error messages
-      if (error.message.includes('Backend service is not running')) {
+      if (err.message && err.message.includes('Backend service is not running')) {
         toast.error('Backend unavailable. Please start the backend server for AI features.', { duration: 6000 });
-      } else if (error.message.includes('API key') || error.message.includes('configured')) {
+      } else if (err.message && (err.message.includes('API key') || err.message.includes('configured'))) {
         toast.error('AI service not configured. Please check your API keys.', { duration: 6000 });
-      } else if (error.message.includes('network') || error.message.includes('connection')) {
+      } else if (err.message && (err.message.includes('network') || err.message.includes('connection'))) {
         toast.error('Network error. Please check your connection and try again.', { duration: 6000 });
       } else {
-        toast.error(`Schema generation failed: ${error.message}`, { duration: 6000 });
+        toast.error(`Schema generation failed: ${err.message ?? 'Unknown error'}`, { duration: 6000 });
       }
-      
+
       // Reset generation step if failed
       setGenerationStep(1);
     } finally {
@@ -242,7 +244,6 @@ const DataGenerator: React.FC = () => {
     setGenerationStep(3);
     setGenerationProgress(0);
     
-    const loadingToast = toast.loading('Starting AI agent orchestration...');
     
     try {
       let sourceData = [];
@@ -291,7 +292,8 @@ const DataGenerator: React.FC = () => {
       
     } catch (error) {
       toast.dismiss();
-      toast.error(`Generation failed: ${error.message}`, { duration: 6000 });
+      const err = error as Error & { message?: string };
+      toast.error(`Generation failed: ${err.message}`, { duration: 6000 });
       console.error('❌ Generation error:', error);
       setIsGenerating(false);
       setGenerationStep(2); // Go back to configuration step
