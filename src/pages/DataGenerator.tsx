@@ -21,7 +21,10 @@ import {
   CheckCircle,
   MessageSquare,
   Lightbulb,
-  Sparkles
+  Sparkles,
+  AlertCircle,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
@@ -39,6 +42,8 @@ const DataGenerator: React.FC = () => {
   const [naturalLanguageDescription, setNaturalLanguageDescription] = useState('');
   const [generatedSchema, setGeneratedSchema] = useState<any>(null);
   const [isGeneratingSchema, setIsGeneratingSchema] = useState(false);
+  const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null);
+  const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
   const [generationConfig, setGenerationConfig] = useState({
     rowCount: 10000,
     quality_level: 'high',
@@ -48,6 +53,33 @@ const DataGenerator: React.FC = () => {
   const { user, isGuest, currentProject } = useStore();
   const dataService = new DataGeneratorService();
   const { isConnected, lastMessage } = useWebSocket();
+
+  // Check backend health on component mount
+  useEffect(() => {
+    checkBackendHealth();
+    // Check health every 30 seconds
+    const healthInterval = setInterval(checkBackendHealth, 30000);
+    return () => clearInterval(healthInterval);
+  }, []);
+
+  const checkBackendHealth = async () => {
+    try {
+      console.log('🔍 Checking backend health...');
+      const health = await ApiService.healthCheck();
+      setBackendHealthy(health.healthy);
+      setLastHealthCheck(new Date());
+      
+      if (health.healthy) {
+        console.log('💚 Backend is healthy');
+      } else {
+        console.log('💔 Backend is unhealthy');
+      }
+    } catch (error) {
+      console.log('💔 Backend health check failed:', error);
+      setBackendHealthy(false);
+      setLastHealthCheck(new Date());
+    }
+  };
   
   // Listen for WebSocket updates
   useEffect(() => {
@@ -112,7 +144,7 @@ const DataGenerator: React.FC = () => {
         toast.success('File processed successfully!');
       } catch (error) {
         toast.dismiss();
-        toast.error('Failed to process file. Please check the format.');
+        toast.error(`Failed to process file: ${error.message}`);
         console.error('File processing error:', error);
       }
     },
@@ -142,16 +174,17 @@ const DataGenerator: React.FC = () => {
     }
 
     setIsGeneratingSchema(true);
-    toast.loading('Generating schema from your description...');
+    const loadingToast = toast.loading('Generating schema from your description...');
     
     // Clear any previous schema
     setGeneratedSchema(null);
 
     try {
-      console.log('Starting schema generation with:', {
+      console.log('🧠 Starting schema generation with:', {
         description,
         selectedDomain,
-        selectedDataType
+        selectedDataType,
+        backendHealthy
       });
       
       const schema = await dataService.generateSchemaFromDescription(
@@ -160,7 +193,7 @@ const DataGenerator: React.FC = () => {
         selectedDataType
       );
       
-      console.log('Schema generated successfully:', schema);
+      console.log('✅ Schema generated successfully:', schema);
       
       // Validate the schema response
       if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
@@ -171,19 +204,24 @@ const DataGenerator: React.FC = () => {
       setGenerationStep(2);
       
       toast.dismiss();
-      toast.success(`Schema generated successfully! Found ${Object.keys(schema.schema).length} fields.`);
+      toast.success(
+        `${backendHealthy ? '🔗 Backend' : '🏠 Local'} schema generated! Found ${Object.keys(schema.schema).length} fields.`,
+        { duration: 4000 }
+      );
       
     } catch (error) {
-      console.error('Schema generation failed:', error);
+      console.error('❌ Schema generation failed:', error);
       toast.dismiss();
       
       // Provide specific error messages
-      if (error.message.includes('API key') || error.message.includes('configured')) {
-        toast.error('AI service not configured. Please check your API keys.');
+      if (error.message.includes('Backend service is not running')) {
+        toast.error('Backend unavailable. Please start the backend server for AI features.', { duration: 6000 });
+      } else if (error.message.includes('API key') || error.message.includes('configured')) {
+        toast.error('AI service not configured. Please check your API keys.', { duration: 6000 });
       } else if (error.message.includes('network') || error.message.includes('connection')) {
-        toast.error('Network error. Please check your connection and try again.');
+        toast.error('Network error. Please check your connection and try again.', { duration: 6000 });
       } else {
-        toast.error(`Failed to generate schema: ${error.message}`);
+        toast.error(`Schema generation failed: ${error.message}`, { duration: 6000 });
       }
       
       // Reset generation step if failed
@@ -202,6 +240,7 @@ const DataGenerator: React.FC = () => {
     
     setIsGenerating(true);
     setGenerationStep(3);
+    setGenerationProgress(0);
     
     const loadingToast = toast.loading('Starting AI agent orchestration...');
     
@@ -217,49 +256,45 @@ const DataGenerator: React.FC = () => {
         schema = generatedSchema.schema || {};
       }
 
-      // For guests, use local generation without backend
-      if (isGuest && !user) {
-        // Use local data generation service
-        const result = await dataService.generateSyntheticDataset({
-          domain: selectedDomain,
-          data_type: selectedDataType,
-          sourceData,
-          schema,
-          description: naturalLanguageDescription,
-          isGuest: true,
-          ...generationConfig
-        });
-        
-        setGeneratedData(result);
-        setGenerationStep(4);
-        toast.dismiss();
-        toast.success('Synthetic data generated successfully!');
-        setIsGenerating(false);
-        return;
-      }
-
-      // For authenticated users, use backend API
-      const jobResponse = await ApiService.startGeneration({
+      console.log('🚀 Starting generation with config:', {
         domain: selectedDomain,
         data_type: selectedDataType,
-        source_data: sourceData,
+        sourceDataLength: sourceData.length,
+        schemaFields: Object.keys(schema).length,
+        isGuest,
+        backendHealthy
+      });
+
+      // Use the data generator service which will try backend first, then fallback
+      const result = await dataService.generateSyntheticDataset({
+        domain: selectedDomain,
+        data_type: selectedDataType,
+        sourceData,
         schema,
         description: naturalLanguageDescription,
-        ...generationConfig,
-        project_id: currentProject?.id
+        isGuest: isGuest || !user,
+        ...generationConfig
       });
       
-      toast.dismiss();
-      toast.success(`Generation job started! Job ID: ${jobResponse.job_id}`);
+      console.log('✅ Generation completed:', result);
       
-      // Store job ID for tracking
-      setCurrentJobId(jobResponse.job_id);
+      setGeneratedData(result);
+      setGenerationStep(4);
+      toast.dismiss();
+      
+      const method = result.metadata?.generationMethod || 'unknown';
+      const methodLabel = method === 'backend_local' ? '🔗 Backend' : 
+                         method === 'local_fallback' ? '🏠 Local' : '✨ AI';
+      
+      toast.success(`${methodLabel} generation complete! ${result.metadata?.rowsGenerated || 0} rows generated.`, { duration: 5000 });
+      setIsGenerating(false);
       
     } catch (error) {
       toast.dismiss();
-      toast.error('Failed to start generation job');
-      console.error('Generation error:', error);
+      toast.error(`Generation failed: ${error.message}`, { duration: 6000 });
+      console.error('❌ Generation error:', error);
       setIsGenerating(false);
+      setGenerationStep(2); // Go back to configuration step
     }
   };
   
@@ -289,6 +324,14 @@ const DataGenerator: React.FC = () => {
     }
   };
 
+  // Helper function to check if generation button should be enabled
+  const isGenerationButtonEnabled = () => {
+    const hasBasicRequirements = selectedDomain && selectedDataType;
+    const hasValidInput = (inputMethod === 'describe' && generatedSchema) || 
+                         (inputMethod === 'upload' && uploadedData);
+    return hasBasicRequirements && hasValidInput && !isGenerating && !isGeneratingSchema;
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -309,12 +352,53 @@ const DataGenerator: React.FC = () => {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Backend Status Indicator */}
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+            backendHealthy === null ? 'bg-gray-500/20 border-gray-500/30' :
+            backendHealthy ? 'bg-green-500/20 border-green-500/30' : 'bg-red-500/20 border-red-500/30'
+          }`}>
+            {backendHealthy === null ? (
+              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+            ) : backendHealthy ? (
+              <Wifi className="w-4 h-4 text-green-400" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-red-400" />
+            )}
+            <span className={`text-sm ${
+              backendHealthy === null ? 'text-gray-300' :
+              backendHealthy ? 'text-green-300' : 'text-red-300'
+            }`}>
+              {backendHealthy === null ? 'Checking...' :
+               backendHealthy ? 'Backend Online' : 'Backend Offline'}
+            </span>
+          </div>
+          
           <div className="flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full border border-purple-500/30">
             <Brain className="w-4 h-4 text-purple-400" />
             <span className="text-sm text-purple-300">AI Agents Active</span>
           </div>
         </div>
       </motion.div>
+
+      {/* Backend Status Warning */}
+      {backendHealthy === false && (
+        <motion.div
+          className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-yellow-400" />
+            <div>
+              <p className="text-yellow-300 font-medium">Backend service offline</p>
+              <p className="text-yellow-200 text-sm">
+                Using local AI generation. For best results, start the backend server.
+                {lastHealthCheck && ` Last checked: ${lastHealthCheck.toLocaleTimeString()}`}
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Generation Steps */}
       <div className="flex items-center gap-4 p-4 bg-gray-800/50 backdrop-blur-xl border border-gray-700/50 rounded-xl">
@@ -604,9 +688,11 @@ const DataGenerator: React.FC = () => {
             <h3 className="text-lg font-semibold text-white mb-4">AI Agents</h3>
             <div className="space-y-3">
               <div className="flex items-center gap-2 mb-2">
-                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                <div className={`w-2 h-2 rounded-full ${
+                  backendHealthy ? 'bg-green-400' : 'bg-yellow-400'
+                }`}></div>
                 <span className="text-xs text-gray-400">
-                  {isConnected ? 'Real-time Connected' : 'Disconnected'}
+                  {backendHealthy ? 'Backend Connected' : 'Local Mode'}
                 </span>
               </div>
               {[
@@ -616,10 +702,16 @@ const DataGenerator: React.FC = () => {
                 { name: 'Bias Detector', status: 'Ready', icon: Zap },
               ].map((agent, index) => (
                 <div key={index} className="flex items-center gap-3 p-3 bg-gray-700/30 rounded-lg">
-                  <agent.icon className="w-5 h-5 text-green-400" />
+                  <agent.icon className={`w-5 h-5 ${
+                    backendHealthy ? 'text-green-400' : 'text-yellow-400'
+                  }`} />
                   <div>
                     <p className="text-white text-sm font-medium">{agent.name}</p>
-                    <p className="text-green-400 text-xs">{agent.status}</p>
+                    <p className={`text-xs ${
+                      backendHealthy ? 'text-green-400' : 'text-yellow-400'
+                    }`}>
+                      {backendHealthy ? agent.status : 'Local Mode'}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -635,9 +727,7 @@ const DataGenerator: React.FC = () => {
           >
             <button
               onClick={handleGenerate}
-              disabled={isGenerating || !selectedDomain || !selectedDataType || 
-                (inputMethod === 'describe' && !generatedSchema) || 
-                (inputMethod === 'upload' && !uploadedData)}
+              disabled={!isGenerationButtonEnabled()}
               title={
                 !selectedDomain ? 'Please select a domain first' :
                 !selectedDataType ? 'Please select a data type first' :
@@ -646,9 +736,7 @@ const DataGenerator: React.FC = () => {
                 'Generate synthetic data'
               }
               className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-300 ${
-                isGenerating || !selectedDomain || !selectedDataType ||
-                (inputMethod === 'describe' && !generatedSchema) ||
-                (inputMethod === 'upload' && !uploadedData)
+                !isGenerationButtonEnabled()
                   ? 'bg-gray-600 cursor-not-allowed'
                   : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600'
               } text-white flex items-center justify-center gap-2`}
@@ -675,6 +763,8 @@ const DataGenerator: React.FC = () => {
                 <div>Generated Schema: {generatedSchema ? 'Yes' : 'No'}</div>
                 <div>Uploaded Data: {uploadedData ? 'Yes' : 'No'}</div>
                 <div>Schema Fields: {generatedSchema ? Object.keys(generatedSchema.schema || {}).length : 0}</div>
+                <div>Button Enabled: {isGenerationButtonEnabled() ? 'Yes' : 'No'}</div>
+                <div>Backend: {backendHealthy ? 'Healthy' : 'Offline'}</div>
               </div>
             )}
           </motion.div>
@@ -723,6 +813,13 @@ const DataGenerator: React.FC = () => {
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Bias Score:</span>
                   <span className="text-green-400 font-medium">{generatedData.biasScore}%</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Generation Method:</span>
+                  <span className="text-purple-400 font-medium">
+                    {generatedData.metadata?.generationMethod === 'backend_local' ? 'Backend' :
+                     generatedData.metadata?.generationMethod === 'local_fallback' ? 'Local' : 'AI'}
+                  </span>
                 </div>
               </div>
               <div className="space-y-2 mt-4">
@@ -779,6 +876,12 @@ const DataGenerator: React.FC = () => {
                     {generatedSchema.sampleData?.length || 0}
                   </span>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Method:</span>
+                  <span className={`font-medium ${backendHealthy ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {backendHealthy ? 'Backend' : 'Local'}
+                  </span>
+                </div>
               </div>
               <div className="mt-4 p-3 bg-gray-700/30 rounded-lg">
                 <p className="text-xs text-gray-400 mb-2">Schema Preview:</p>
@@ -826,6 +929,7 @@ const DataGenerator: React.FC = () => {
                 <li>• Making your description more detailed</li>
                 <li>• Selecting a specific domain and data type first</li>
                 <li>• Checking your internet connection</li>
+                {!backendHealthy && <li>• Starting the backend server for better AI features</li>}
               </ul>
               <button
                 onClick={handleGenerateSchema}

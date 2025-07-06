@@ -1,6 +1,8 @@
 import { GeminiService } from './gemini';
 import { supabase } from './supabase';
 import { v4 as uuidv4 } from 'uuid';
+import { ApiService } from './api';
+import toast from 'react-hot-toast';
 
 export class DataGeneratorService {
   private gemini = new GeminiService();
@@ -28,20 +30,48 @@ export class DataGeneratorService {
     dataType: string
   ) {
     try {
-      console.log('Generating schema from description:', { description, domain, dataType });
+      console.log('🧠 DataGeneratorService: Generating schema from description:', { description: description.substring(0, 100), domain, dataType });
       
-      // Try to use backend API first
+      // Validate inputs
+      if (!description || description.trim().length < 10) {
+        throw new Error('Description must be at least 10 characters long');
+      }
+      
+      if (!domain || !dataType) {
+        throw new Error('Domain and data type must be specified');
+      }
+      
+      // Try backend API first with clear logging
       try {
+        console.log('🔗 Attempting backend API call...');
         const schema = await ApiService.generateSchemaFromDescription(description, domain, dataType);
+        console.log('✅ Backend schema response received:', schema);
+        
+        // Validate the response
+        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
+          throw new Error('Backend returned empty or invalid schema');
+        }
+        
         return schema;
       } catch (backendError) {
-        console.log('Backend unavailable, using local Gemini service');
+        console.log('⚠️ Backend API failed, falling back to local Gemini service:', backendError.message);
+        
+        // Show user that we're falling back
+        toast.error('Backend unavailable. Using local AI service.', { duration: 3000 });
+        
         // Fallback to local Gemini service
         const schema = await this.gemini.generateSchemaFromNaturalLanguage(
           description,
           domain,
           dataType
         );
+        
+        console.log('✅ Local Gemini schema response:', schema);
+        
+        // Validate the response
+        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
+          throw new Error('Failed to generate valid schema using local AI');
+        }
         
         // Generate sample data based on the schema
         const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
@@ -54,36 +84,108 @@ export class DataGeneratorService {
       }
       
     } catch (error) {
-      console.error('Error generating schema from description:', error);
-      throw error;
+      console.error('❌ Error generating schema from description:', error);
+      
+      // Provide more helpful error messages
+      if (error.message.includes('Backend service is not running')) {
+        throw new Error('Backend service is not running. Please start the backend server to use AI features.');
+      } else if (error.message.includes('API key')) {
+        throw new Error('AI service not configured. Please check your API keys in environment variables.');
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        throw new Error('Network error. Please check your connection and try again.');
+      } else {
+        throw error;
+      }
     }
   }
 
   private generateSampleDataFromSchema(schema: any, rowCount: number = 5): any[] {
+    console.log('📊 Generating sample data from schema with', Object.keys(schema).length, 'fields');
     const sampleData = [];
     
     for (let i = 0; i < rowCount; i++) {
       const row: any = {};
       
       Object.entries(schema).forEach(([fieldName, fieldInfo]: [string, any]) => {
-        row[fieldName] = this.generateSampleValue(fieldInfo, i);
+        row[fieldName] = this.generateRealisticSampleValue(fieldInfo, fieldName, i);
       });
       
       sampleData.push(row);
     }
     
+    console.log('✅ Generated sample data:', sampleData);
     return sampleData;
   }
 
-  private generateSampleValue(fieldInfo: any, index: number): any {
-    const { type, constraints, examples } = fieldInfo;
+  private generateRealisticSampleValue(fieldInfo: any, fieldName: string, index: number): any {
+    const { type, constraints, examples, description } = fieldInfo;
     
+    // Use examples if available
+    if (examples && examples.length > 0) {
+      return examples[index % examples.length];
+    }
+    
+    // Generate realistic data based on field name and type
+    const lowerFieldName = fieldName.toLowerCase();
+    const lowerDescription = (description || '').toLowerCase();
+    
+    // Healthcare domain specific
+    if (lowerFieldName.includes('patient') || lowerDescription.includes('patient')) {
+      return `PT${String(1000 + index).padStart(4, '0')}`;
+    }
+    
+    if (lowerFieldName.includes('name') || lowerDescription.includes('name')) {
+      const names = ['John Smith', 'Mary Johnson', 'David Brown', 'Sarah Davis', 'Michael Wilson', 'Emma Garcia', 'James Miller', 'Lisa Anderson'];
+      return names[index % names.length];
+    }
+    
+    if (lowerFieldName.includes('age') || lowerDescription.includes('age')) {
+      return 25 + (index * 3) % 50;
+    }
+    
+    if (lowerFieldName.includes('diagnosis') || lowerDescription.includes('diagnosis')) {
+      const diagnoses = ['Hypertension', 'Diabetes Type 2', 'Asthma', 'Migraine', 'Arthritis', 'Depression'];
+      return diagnoses[index % diagnoses.length];
+    }
+    
+    // Finance domain specific
+    if (lowerFieldName.includes('amount') || lowerFieldName.includes('balance')) {
+      return (Math.random() * 10000 + 100).toFixed(2);
+    }
+    
+    if (lowerFieldName.includes('account')) {
+      return `ACC${String(100000 + index).substr(-6)}`;
+    }
+    
+    // Retail domain specific
+    if (lowerFieldName.includes('product')) {
+      const products = ['Laptop Pro 15"', 'Wireless Headphones', 'Smart Watch', 'Gaming Mouse', 'USB Drive 64GB', 'Bluetooth Speaker'];
+      return products[index % products.length];
+    }
+    
+    if (lowerFieldName.includes('price')) {
+      return (Math.random() * 500 + 50).toFixed(2);
+    }
+    
+    if (lowerFieldName.includes('category')) {
+      const categories = ['Electronics', 'Clothing', 'Books', 'Home & Garden', 'Sports', 'Automotive'];
+      return categories[index % categories.length];
+    }
+    
+    // Generic field types
     switch (type) {
       case 'string':
-        if (examples && examples.length > 0) {
-          return examples[index % examples.length];
+      case 'text':
+        if (lowerFieldName.includes('email')) {
+          return `user${index + 1}@example.com`;
         }
-        return `sample_${fieldInfo.name || 'value'}_${index + 1}`;
+        if (lowerFieldName.includes('phone')) {
+          return `+1-555-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`;
+        }
+        if (lowerFieldName.includes('address')) {
+          return `${123 + index} Main Street, City, State ${10001 + index}`;
+        }
+        return `${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)} ${index + 1}`;
         
       case 'number':
       case 'integer':
@@ -112,7 +214,7 @@ export class DataGeneratorService {
         return uuidv4();
         
       default:
-        return `sample_value_${index + 1}`;
+        return `Realistic ${fieldName} ${index + 1}`;
     }
   }
 
@@ -124,7 +226,7 @@ export class DataGeneratorService {
         try {
           const content = e.target?.result as string;
           
-          console.log('File content preview:', content.substring(0, 200));
+          console.log('📁 File content preview:', content.substring(0, 200));
           
           if (file.name.endsWith('.json')) {
             try {
@@ -211,7 +313,7 @@ export class DataGeneratorService {
                 return;
               }
               
-              console.log('Parsed CSV data:', data.slice(0, 3));
+              console.log('✅ Parsed CSV data:', data.slice(0, 3));
               resolve(data);
             } catch (csvError) {
               reject(new Error(`CSV parsing error: ${csvError.message}`));
@@ -222,13 +324,13 @@ export class DataGeneratorService {
             reject(new Error(`Unsupported file format: ${file.name}. Please use CSV or JSON files.`));
           }
         } catch (error) {
-          console.error('File parsing error:', error);
+          console.error('❌ File parsing error:', error);
           reject(new Error(`Failed to parse file: ${error.message}`));
         }
       };
       
       reader.onerror = (error) => {
-        console.error('FileReader error:', error);
+        console.error('❌ FileReader error:', error);
         reject(new Error('Failed to read file. Please try again.'));
       };
       
@@ -290,113 +392,25 @@ export class DataGeneratorService {
     return stats;
   }
 
-  async generateSchemaFromDescription(
-    description: string, 
-    domain: string, 
-    dataType: string
-  ) {
-    try {
-      console.log('Generating schema from description:', { description, domain, dataType });
-      
-      // Validate inputs
-      if (!description || description.trim().length < 10) {
-        throw new Error('Description must be at least 10 characters long');
-      }
-      
-      if (!domain || !dataType) {
-        throw new Error('Domain and data type must be specified');
-      }
-      
-      // Try to use backend API first
-      try {
-        console.log('Attempting backend API call...');
-        const schema = await ApiService.generateSchemaFromDescription(description, domain, dataType);
-        console.log('Backend schema response:', schema);
-        
-        // Validate the response
-        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
-          throw new Error('Backend returned empty schema');
-        }
-        
-        return schema;
-      } catch (backendError) {
-        console.log('Backend unavailable, using local Gemini service:', backendError.message);
-        
-        // Fallback to local Gemini service
-        const schema = await this.gemini.generateSchemaFromNaturalLanguage(
-          description,
-          domain,
-          dataType
-        );
-        
-        console.log('Local Gemini schema response:', schema);
-        
-        // Validate the response
-        if (!schema || !schema.schema || Object.keys(schema.schema).length === 0) {
-          throw new Error('Failed to generate valid schema');
-        }
-        
-        // Generate sample data based on the schema
-        const sampleData = this.generateSampleDataFromSchema(schema.schema || {}, 5);
-        
-        return {
-          ...schema,
-          sampleData,
-          detectedDomain: schema.detectedDomain || domain
-        };
-      }
-      
-    } catch (error) {
-      console.error('Error generating schema from description:', error);
-      
-      // Provide a more helpful error message
-      if (error.message.includes('API key')) {
-        throw new Error('AI service not configured. Schema generation requires API setup.');
-      } else if (error.message.includes('network') || error.message.includes('fetch')) {
-        throw new Error('Network error. Please check your connection and try again.');
-      } else {
-        throw new Error(`Schema generation failed: ${error.message}`);
-      }
-    }
-  }
-
-  private getNumberRange(values: number[]) {
-    const numbers = values.filter(v => !isNaN(Number(v))).map(Number);
-    return {
-      min: Math.min(...numbers),
-      max: Math.max(...numbers),
-      avg: numbers.reduce((a, b) => a + b, 0) / numbers.length
-    };
-  }
-
-  private getDateRange(values: string[]) {
-    const dates = values.map(v => new Date(v)).filter(d => !isNaN(d.getTime()));
-    return {
-      min: new Date(Math.min(...dates.map(d => d.getTime()))),
-      max: new Date(Math.max(...dates.map(d => d.getTime())))
-    };
-  }
-
-  private getUniqueValues(values: any[]) {
-    return [...new Set(values)];
-  }
-
-  private isDate(value: any): boolean {
-    return !isNaN(Date.parse(value));
-  }
-
   async generateSyntheticDataset(config: any) {
     try {
-      // For guests, try local generation first
-      if (config.isGuest) {
-        try {
-          const result = await ApiService.generateLocalData(config);
-          return result;
-        } catch (backendError) {
-          console.log('Backend unavailable, using local generation');
-          // Continue with local generation below
-        }
+      console.log('🎯 Starting synthetic dataset generation with config:', config);
+      
+      // For guests and authenticated users, try backend first
+      try {
+        console.log('🔗 Attempting backend generation...');
+        const result = await ApiService.generateLocalData(config);
+        console.log('✅ Backend generation successful:', result);
+        return result;
+      } catch (backendError) {
+        console.log('⚠️ Backend generation failed, using local fallback:', backendError.message);
+        toast.error('Backend unavailable. Using local AI generation.', { duration: 3000 });
+        
+        // Continue with local generation below
       }
+      
+      // Local fallback generation
+      console.log('🏠 Using local generation fallback...');
       
       // Step 1: Schema Analysis
       const schemaAnalysis = await this.gemini.analyzeDataSchema(config.sourceData || []);
@@ -421,7 +435,7 @@ export class DataGeneratorService {
       // Step 5: Quality Assessment
       const qualityScore = this.assessDataQuality(syntheticData, config.sourceData || []);
       
-      return {
+      const result = {
         data: syntheticData,
         qualityScore,
         privacyScore: privacyAssessment.privacyScore,
@@ -430,11 +444,15 @@ export class DataGeneratorService {
           rowsGenerated: syntheticData.length,
           columnsGenerated: Object.keys(syntheticData[0] || {}).length,
           generationTime: new Date().toISOString(),
-          config
+          config,
+          generationMethod: 'local_fallback'
         }
       };
+      
+      console.log('✅ Local generation complete:', result);
+      return result;
     } catch (error) {
-      console.error('Error generating synthetic dataset:', error);
+      console.error('❌ Error generating synthetic dataset:', error);
       throw error;
     }
   }
@@ -499,5 +517,30 @@ export class DataGeneratorService {
     // This would require additional Excel library implementation
     // For now, return CSV format
     return this.exportToCSV(data);
+  }
+
+  private getNumberRange(values: number[]) {
+    const numbers = values.filter(v => !isNaN(Number(v))).map(Number);
+    return {
+      min: Math.min(...numbers),
+      max: Math.max(...numbers),
+      avg: numbers.reduce((a, b) => a + b, 0) / numbers.length
+    };
+  }
+
+  private getDateRange(values: string[]) {
+    const dates = values.map(v => new Date(v)).filter(d => !isNaN(d.getTime()));
+    return {
+      min: new Date(Math.min(...dates.map(d => d.getTime()))),
+      max: new Date(Math.max(...dates.map(d => d.getTime())))
+    };
+  }
+
+  private getUniqueValues(values: any[]) {
+    return [...new Set(values)];
+  }
+
+  private isDate(value: any): boolean {
+    return !isNaN(Date.parse(value));
   }
 }

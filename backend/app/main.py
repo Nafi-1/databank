@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 import asyncio
 import uvicorn
+import logging
+import sys
 
 from .config import settings
 from .routes import auth, datasets, generation, analytics, agents
@@ -13,6 +15,16 @@ from .websocket_manager import ConnectionManager
 from .services.redis_service import RedisService
 from .services.supabase_service import SupabaseService
 from .middleware.auth import verify_token
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -23,7 +35,7 @@ app = FastAPI(
     redoc_url="/api/redoc"
 )
 
-# Configure CORS
+# Configure CORS with detailed settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -31,11 +43,13 @@ app.add_middleware(
         "https://localhost:5173", 
         "http://127.0.0.1:5173",
         "https://127.0.0.1:5173",
+        "http://localhost:3000",
+        "https://localhost:3000",
         "https://*.vercel.app",
         "https://*.netlify.app"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -70,44 +84,95 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    await redis_service.initialize()
-    await supabase_service.initialize()
-    print("🚀 DataGenesis AI API started successfully!")
+    logger.info("🚀 Starting DataGenesis AI API...")
+    
+    try:
+        await redis_service.initialize()
+        logger.info("✅ Redis service initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis initialization failed: {e}")
+    
+    try:
+        await supabase_service.initialize()
+        logger.info("✅ Supabase service initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Supabase initialization failed: {e}")
+    
+    logger.info("🎯 DataGenesis AI API started successfully!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    await redis_service.close()
-    print("📴 DataGenesis AI API shutdown complete")
+    logger.info("📴 Shutting down DataGenesis AI API...")
+    try:
+        await redis_service.close()
+        logger.info("✅ Redis service closed")
+    except:
+        pass
+    logger.info("📴 DataGenesis AI API shutdown complete")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = datetime.utcnow()
+    logger.info(f"🔗 {request.method} {request.url.path} - Starting request")
+    
+    response = await call_next(request)
+    
+    process_time = (datetime.utcnow() - start_time).total_seconds()
+    logger.info(f"✅ {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}s")
+    
+    return response
 
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {
+    logger.info("🏥 Health check requested")
+    
+    health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "services": {
-            "redis": await redis_service.ping(),
-            "supabase": await supabase_service.health_check()
-        }
+        "version": "1.0.0",
+        "services": {}
     }
+    
+    # Check Redis
+    try:
+        redis_healthy = await redis_service.ping()
+        health_status["services"]["redis"] = "healthy" if redis_healthy else "unhealthy"
+    except Exception as e:
+        health_status["services"]["redis"] = f"error: {str(e)}"
+    
+    # Check Supabase
+    try:
+        supabase_healthy = await supabase_service.health_check()
+        health_status["services"]["supabase"] = "healthy" if supabase_healthy else "unhealthy"
+    except Exception as e:
+        health_status["services"]["supabase"] = f"error: {str(e)}"
+    
+    logger.info(f"✅ Health check completed: {health_status}")
+    return health_status
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """WebSocket endpoint for real-time updates"""
+    logger.info(f"🔌 WebSocket connection requested for client: {client_id}")
     await manager.connect(websocket, client_id)
     try:
         while True:
             # Keep connection alive and handle incoming messages
             data = await websocket.receive_text()
+            logger.info(f"📨 WebSocket message from {client_id}: {data}")
             await manager.send_personal_message(f"Echo: {data}", client_id)
     except WebSocketDisconnect:
+        logger.info(f"🔌 WebSocket disconnected for client: {client_id}")
         manager.disconnect(client_id)
         await manager.broadcast(f"Client {client_id} disconnected")
 
 @app.get("/api/system/status")
 async def system_status(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Get real-time system status"""
+    logger.info("📊 System status requested")
+    
     # Allow both authenticated users and guests
     user = None
     if credentials:
@@ -117,17 +182,28 @@ async def system_status(credentials: HTTPAuthorizationCredentials = Depends(secu
             pass
     
     # Get real-time metrics from Redis
-    metrics = await redis_service.get_system_metrics()
+    try:
+        metrics = await redis_service.get_system_metrics()
+    except:
+        metrics = {}
     
-    return {
+    status = {
         "timestamp": datetime.utcnow().isoformat(),
         "active_users": metrics.get("active_users", 0),
         "active_generations": metrics.get("active_generations", 0),
         "total_datasets": metrics.get("total_datasets", 0),
-        "agent_status": await redis_service.get_agent_status(),
-        "performance_metrics": await redis_service.get_performance_metrics(),
+        "agent_status": await redis_service.get_agent_status() if redis_service else {},
+        "performance_metrics": await redis_service.get_performance_metrics() if redis_service else {},
         "user_type": "guest" if (user and user.get("is_guest")) else "authenticated" if user else "anonymous"
     }
+    
+    logger.info(f"✅ System status returned: {status}")
+    return status
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"❌ Unhandled exception in {request.method} {request.url.path}: {str(exc)}")
+    return {"error": "Internal server error", "detail": str(exc)}
 
 if __name__ == "__main__":
     uvicorn.run(
